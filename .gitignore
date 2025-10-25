@@ -1,0 +1,12 @@
+# Project ignores
+__pycache__/
+*.pt
+*.pth
+.DS_Store
+*.png
+*.csv
+*.out
+*.log
+course_examples/
+.cursorrules
+spec.pdf
