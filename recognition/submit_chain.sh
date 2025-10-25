@@ -20,10 +20,10 @@ JOBID=""
 for i in $(seq 1 "$NUM_JOBS"); do
   if [[ -z "$JOBID" ]]; then
     # First job
-    JOBID=$(sbatch --export=ALL,EPOCHS=$TARGET_EPOCHS recog/run.sh | awk '{print $4}')
+    JOBID=$(sbatch --export=ALL,EPOCHS=$TARGET_EPOCHS recognition/run.sh | awk '{print $4}')
   else
     # Chain dependent jobs; start after previous finishes
-    JOBID=$(sbatch --dependency=afterany:$JOBID --export=ALL,EPOCHS=$TARGET_EPOCHS recog/run.sh | awk '{print $4}')
+    JOBID=$(sbatch --dependency=afterany:$JOBID --export=ALL,EPOCHS=$TARGET_EPOCHS recognition/run.sh | awk '{print $4}')
   fi
   echo "Submitted job $i/$NUM_JOBS with ID $JOBID"
 done

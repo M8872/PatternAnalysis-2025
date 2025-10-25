@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_OUT_DIR="$SCRIPT_DIR/runs"
 REMOTE_HOST="rangpur"
-REMOTE_DIR="~/recog/runs"
+REMOTE_DIR="~/recognition/runs"
 
 mkdir -p "$LOCAL_OUT_DIR"
 rsync -avz --progress \

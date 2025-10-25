@@ -5,9 +5,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_DIR="$SCRIPT_DIR"
 REMOTE_HOST="rangpur"
-REMOTE_DIR="~/recog"
+REMOTE_DIR="~/recognition"
 
-ssh "$REMOTE_HOST" 'mkdir -p ~/recog'
+ssh "$REMOTE_HOST" 'mkdir -p ~/recognition'
 rsync -avz --progress \
   --delete \
   --exclude 'out/*' \
