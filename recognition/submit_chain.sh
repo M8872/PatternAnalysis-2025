@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Submit N chained sbatch jobs on a100-test that resume training.
-# Usage: ./recog/submit_chain.sh <num_jobs> [epochs]
+# Usage: ./recognition/submit_chain.sh <num_jobs> [epochs]
 # - num_jobs: how many sequential jobs to submit (each 20m max)
 # - epochs: total target epochs to aim for (default 20)
 

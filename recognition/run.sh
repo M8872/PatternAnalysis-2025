@@ -23,7 +23,7 @@ DATA_ROOT="/home/groups/comp3710/ADNI/AD_NC"
 EPOCHS="${EPOCHS:-20}"
 
 # Run training (resumable across jobs) from repo root using module mode
-python -u -m recognition.src.train \
+python -u -m src.train \
   --data-root "$DATA_ROOT" \
   --epochs "$EPOCHS" \
   --batch-size 16 \
