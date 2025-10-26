@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --time=00:20:00
-#SBATCH --output=$HOME/recognition/runs/logs/%x-%j.out
+#SBATCH --output=runs/logs/%x-%j.out
 
 
 # Always run from the project directory so outputs land in ~/recognition/runs
@@ -40,7 +40,6 @@ python -u -m src.train \
   --epochs "$EPOCHS" \
   --batch-size 16 \
   --lr 1e-3 \
-  --slices-per-volume 8 \
   --resume \
   --checkpoints-dir runs/checkpoints \
   --plots-dir runs/metrics
