@@ -32,7 +32,7 @@ fi
 DATA_ROOT="/home/groups/comp3710/ADNI/AD_NC"
 
 # Configure total target epochs (fixed)
-EPOCHS="25"
+EPOCHS="50"
 
 # Run training (resumable across jobs) using local package path
 python -u -m src.train \
