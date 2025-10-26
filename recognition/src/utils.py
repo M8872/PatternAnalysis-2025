@@ -163,9 +163,24 @@ def load_checkpoint(
 
 
 def find_latest_checkpoint(checkpoints_dir: str) -> Optional[str]:
-    """Return path to latest checkpoint by epoch number if any exist."""
+    """Return a checkpoint path to load for resume/inference.
+
+    Preference order:
+    1) last.pt (rolling latest training state)
+    2) best.pt (highest val accuracy seen)
+    3) Highest-numbered historical epoch checkpoint (backward compatibility)
+    """
     if not os.path.isdir(checkpoints_dir):
         return None
+
+    last_ckpt = os.path.join(checkpoints_dir, "last.pt")
+    if os.path.isfile(last_ckpt):
+        return last_ckpt
+
+    best_ckpt = os.path.join(checkpoints_dir, "best.pt")
+    if os.path.isfile(best_ckpt):
+        return best_ckpt
+
     candidates = [
         os.path.join(checkpoints_dir, f)
         for f in os.listdir(checkpoints_dir)
@@ -173,12 +188,14 @@ def find_latest_checkpoint(checkpoints_dir: str) -> Optional[str]:
     ]
     if not candidates:
         return None
+
     def epoch_num(path: str) -> int:
         try:
             base = os.path.basename(path)
             return int(base.replace("checkpoint_epoch_", "").replace(".pt", ""))
         except Exception:
             return -1
+
     candidates.sort(key=epoch_num)
     return candidates[-1]
 
@@ -224,21 +241,14 @@ def save_checkpoints(
     val_acc_list: List[float],
     best_val_acc: float,
 ) -> float:
-    """Save per-epoch, last, and best checkpoints.
+    """Save only rolling last and best checkpoints.
 
-    This is a simple wrapper so the training script stays clean. It uses the
-    lower-level save_checkpoint helper defined above.
+    This keeps storage small by avoiding per-epoch files.
 
     Returns the possibly-updated best_val_acc.
     """
     # Ensure the output directory exists
     ensure_dir(checkpoints_dir)
-
-    # Always save a numbered checkpoint for this epoch
-    ckpt_name = os.path.join(checkpoints_dir, f"checkpoint_epoch_{epoch}.pt")
-    save_checkpoint(
-        ckpt_name, model, optimizer, epoch, train_loss_list, val_loss_list, val_acc_list
-    )
 
     # Always update the rolling "last.pt"
     last_ckpt = os.path.join(checkpoints_dir, "last.pt")
