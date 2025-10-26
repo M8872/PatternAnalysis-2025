@@ -300,7 +300,7 @@ def update_plots_csv(
     save_csv_log(csv_path, train_loss_list, val_loss_list, val_acc_list)
 
     # Save a figure file for quick visual inspection (per-epoch png)
-    fig_path = os.path.join(plots_dir, f"loss_acc_epoch_{epoch}.png")
+    fig_path = os.path.join(plots_dir, "loss_acc_epoch.png")
     plot_loss_accuracy(train_loss_list, val_loss_list, val_acc_list, fig_path)
 
 
