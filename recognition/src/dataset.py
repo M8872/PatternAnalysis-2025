@@ -2,7 +2,7 @@
 Dataset and DataLoader utilities for simple Alzheimer's (AD vs CN) classification.
 
 This file converts 3D MRI NIfTI volumes into a small set of 2D axial slices
-that we can feed into a 2D image model (ConvNeXt-Tiny). The goal is to keep
+that we can feed into a 2D image model (ConvNeXt-like Tiny). The goal is to keep
 everything very simple and very commented so beginners can follow.
 
 High-level steps:
@@ -10,9 +10,11 @@ High-level steps:
 2) MRISliceDataset: read a specific axial slice from each volume, turn into PIL
 3) create_dataloaders(...): split into train/val/test and wrap with DataLoader
 
-We use ImageNet normalization because the model is pretrained on ImageNet.
-We also replicate the single grayscale slice to 3 channels (RGB) to match
-the expected input shape for ConvNeXt/ResNet-like backbones.
+We keep ImageNet-style mean/std normalization as a simple default for 3-channel
+inputs, even though our model is trained from scratch. This is optional; you can
+disable it if you prefer to rely only on [0,1] scaling. We also replicate the
+single grayscale slice to 3 channels (RGB) to match the expected input shape for
+common CNN backbones.
 """
 
 # ========= IMPORTS =========
@@ -134,8 +136,8 @@ class MRISliceDataset(Dataset):
     2) Picks one axial slice (by slice_index)
     3) Converts it to a PIL grayscale image (so torchvision can process it)
     4) Applies basic transforms (resize, to tensor)
-    5) Replicates channels to get 3xHxW (ConvNeXt expects 3 channels)
-    6) Normalizes using ImageNet mean/std (common for pretrained models)
+    5) Replicates channels to get 3xHxW (common CNNs expect 3 channels)
+    6) Normalizes using ImageNet mean/std (simple default; optional)
     """
 
     def __init__(

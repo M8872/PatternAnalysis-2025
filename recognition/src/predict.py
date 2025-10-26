@@ -60,7 +60,7 @@ def main() -> None:
     )
 
     # --------- BUILD MODEL AND LOAD LATEST CHECKPOINT ---------
-    model = build_convnext_tiny(num_classes=2, pretrained=False).to(device)
+    model = build_convnext_tiny(num_classes=2).to(device)
     latest = find_latest_checkpoint(args.checkpoints_dir)
     if latest is None:
         raise FileNotFoundError(f"No checkpoint found in {args.checkpoints_dir}. Train first.")

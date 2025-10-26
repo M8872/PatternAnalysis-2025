@@ -29,7 +29,8 @@ else
 fi
 
 # Dataset root (must contain AD/ and CN/ subfolders with .nii/.nii.gz)
-: "${DATA_DIR:?Set DATA_DIR to your dataset root (contains AD/ and CN/)}"
+# Default to the shared ADNI path; can be overridden by exporting DATA_DIR
+DATA_DIR="${DATA_DIR:-/home/groups/comp3710/ADNI}"
 DATA_ROOT="$DATA_DIR"
 
 # Configure total target epochs (can be overridden by env EPOCHS)

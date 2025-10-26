@@ -172,8 +172,8 @@ def main() -> None:
     )
 
     # ========= SETUP MODEL + LOSS + OPTIMIZER =========
-    # Build a small ConvNeXt model (pretrained on ImageNet) for 2 classes.
-    model = build_convnext_tiny(num_classes=2, pretrained=True).to(device)
+    # Build a small ConvNeXt-like model implemented from scratch (no pretrained).
+    model = build_convnext_tiny(num_classes=2).to(device)
     # CrossEntropyLoss is standard for multi-class classification (here 2).
     criterion = nn.CrossEntropyLoss()
     # AdamW is a popular optimizer that works well out of the box.
