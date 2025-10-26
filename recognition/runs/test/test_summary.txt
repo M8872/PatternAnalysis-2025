@@ -1,0 +1,3 @@
+Tested 3220 images.
+Correct predictions: 2782
+Accuracy: 86.40%

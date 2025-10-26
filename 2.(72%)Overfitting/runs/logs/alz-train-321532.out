@@ -1,0 +1,27 @@
+Sun Oct 26 14:17:20 2025       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 535.129.03             Driver Version: 535.129.03   CUDA Version: 12.2     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA A100-PCIE-40GB          Off | 00000000:0B:00.0 Off |                    0 |
+| N/A   28C    P0              33W / 250W |      4MiB / 40960MiB |      0%      Default |
+|                                         |                      |             Disabled |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|  No running processes found                                                           |
++---------------------------------------------------------------------------------------+
+usage: train.py [-h] [--data-root DATA_ROOT] [--epochs EPOCHS]
+                [--batch-size BATCH_SIZE] [--num-workers NUM_WORKERS]
+                [--lr LR] [--train-ratio TRAIN_RATIO] [--val-ratio VAL_RATIO]
+                [--seed SEED] [--resume] [--checkpoints-dir CHECKPOINTS_DIR]
+                [--plots-dir PLOTS_DIR] [--split-output-dir SPLIT_OUTPUT_DIR]
+                [--copy-split]
+train.py: error: unrecognized arguments: --slices-per-volume 8

@@ -1,0 +1,34 @@
+Sun Oct 26 15:10:57 2025       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 535.129.03             Driver Version: 535.129.03   CUDA Version: 12.2     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA A100-PCIE-40GB          Off | 00000000:0B:00.0 Off |                    0 |
+| N/A   47C    P0              35W / 250W |      4MiB / 40960MiB |      0%      Default |
+|                                         |                      |             Disabled |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|  No running processes found                                                           |
++---------------------------------------------------------------------------------------+
+🖥️ Using device: cuda
+📦 Scanning dataset and building DataLoaders (subject-level split)...
+Subject-level split summary (seed=42):
+  train -> 753 unique subjects (NC:389, AD:364); 15060 slices
+  val   -> 162 unique subjects (NC:84, AD:78); 3240 slices
+  test  -> 161 unique subjects (NC:83, AD:78); 3220 slices
+✅ Data ready: train=15060 slices, val=3240, test=3220
+   • train -> 15060 files tracked
+   • val   -> 3240 files tracked
+   • test  -> 3220 files tracked
+🕒 Loaded checkpoint from epoch 20
+🕒 Resuming from checkpoint epoch 20/20
+
+✅ Training segment finished. You can resume with --resume to continue.
