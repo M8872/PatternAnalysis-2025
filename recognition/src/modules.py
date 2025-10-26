@@ -98,12 +98,14 @@ class ConvNeXtLikeTiny(nn.Module):
         num_classes: int = 2,
         dims: List[int] = None,
         depths: List[int] = None,
+        classifier_dropout: float = 0.3,
     ) -> None:
         super().__init__()
         if dims is None:
             dims = [64, 128, 256]
         if depths is None:
             depths = [2, 2, 2]
+        classifier_dropout = float(max(0.0, min(classifier_dropout, 1.0)))
 
         # Early stem to shrink spatial size and increase channels a bit.
         self.stem = nn.Conv2d(in_channels, dims[0], kernel_size=4, stride=4)
@@ -125,6 +127,7 @@ class ConvNeXtLikeTiny(nn.Module):
 
         # Final classifier head: global average pool -> linear
         self.head_norm = LayerNorm2d(dims[-1])
+        self.dropout = nn.Dropout(p=classifier_dropout)
         self.classifier = nn.Linear(dims[-1], num_classes)
 
         # Initialize the linear classifier weights to small values.
@@ -146,12 +149,13 @@ class ConvNeXtLikeTiny(nn.Module):
         # Global average pooling over spatial dims (H, W)
         x = self.head_norm(x)
         x = x.mean(dim=(2, 3))  # [N, C]
-        x = self.classifier(x)   # [N, num_classes]
+        x = self.dropout(x)
+        x = self.classifier(x)  # [N, num_classes]
         return x
 
 
 # ========= PUBLIC FACTORY FUNCTION =========
-def build_convnext_tiny(num_classes: int = 2) -> nn.Module:
+def build_convnext_tiny(num_classes: int = 2, classifier_dropout: float = 0.3) -> nn.Module:
     """Create the minimal ConvNeXt-like Tiny model (from scratch).
 
     Args:
@@ -160,5 +164,4 @@ def build_convnext_tiny(num_classes: int = 2) -> nn.Module:
     Returns:
       A torch.nn.Module that predicts logits of shape [batch_size, num_classes].
     """
-    return ConvNeXtLikeTiny(in_channels=3, num_classes=num_classes)
-
+    return ConvNeXtLikeTiny(in_channels=3, num_classes=num_classes, classifier_dropout=classifier_dropout)

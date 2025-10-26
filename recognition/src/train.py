@@ -24,6 +24,7 @@ from typing import List, Tuple, Dict, Any
 
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -139,6 +140,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay applied by AdamW.")
     parser.add_argument("--train-ratio", type=float, default=0.7, help="Fraction of subjects assigned to the training split.")
     parser.add_argument("--val-ratio", type=float, default=0.15, help="Fraction of subjects assigned to the validation split.")
     parser.add_argument("--seed", type=int, default=42)
@@ -147,6 +149,10 @@ def main() -> None:
     parser.add_argument("--plots-dir", type=str, default="runs/metrics")
     parser.add_argument("--split-output-dir", type=str, default=None, help="Optional folder to mirror the subject split (symlinks by default).")
     parser.add_argument("--copy-split", action="store_true", help="Copy files instead of symlinking when materialising the split.")
+    parser.add_argument("--classifier-dropout", type=float, default=0.3, help="Dropout probability applied before the classifier head.")
+    parser.add_argument("--scheduler-patience", type=int, default=2, help="ReduceLROnPlateau patience (epochs without val-loss improvement).")
+    parser.add_argument("--scheduler-factor", type=float, default=0.5, help="Multiplicative factor for ReduceLROnPlateau.")
+    parser.add_argument("--scheduler-min-lr", type=float, default=1e-6, help="Minimum learning rate for ReduceLROnPlateau.")
     args = parser.parse_args()
 
     # ========= SETUP SEED + DEVICE (determinism and GPU/CPU choice) =========
@@ -185,11 +191,23 @@ def main() -> None:
 
     # ========= SETUP MODEL + LOSS + OPTIMIZER =========
     # Build a small ConvNeXt-like model implemented from scratch (no pretrained).
-    model = build_convnext_tiny(num_classes=2).to(device)
+    model = build_convnext_tiny(num_classes=2, classifier_dropout=args.classifier_dropout).to(device)
     # CrossEntropyLoss is standard for multi-class classification (here 2).
     criterion = nn.CrossEntropyLoss()
     # AdamW is a popular optimizer that works well out of the box.
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+    )
+    scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=args.scheduler_factor,
+        patience=args.scheduler_patience,
+        min_lr=args.scheduler_min_lr,
+        verbose=True,
+    )
 
     # ========= OPTIONAL: RESUME FROM CHECKPOINT =========
     # If --resume is passed, we try to load the latest checkpoint and continue.
@@ -202,9 +220,11 @@ def main() -> None:
     ckpt_path = find_latest_checkpoint(args.checkpoints_dir) if args.resume else None
     if ckpt_path is not None and os.path.isfile(ckpt_path):
         start_epoch, train_loss_list, val_loss_list, val_acc_list = load_checkpoint(
-            ckpt_path, model, optimizer
+            ckpt_path, model, optimizer, scheduler
         )
         print(f"🕒 Resuming from checkpoint epoch {start_epoch}/{args.epochs}")
+        if val_acc_list:
+            best_val_acc = max(val_acc_list)
     elif args.resume:
         print("ℹ️ --resume set but no checkpoint found. Starting fresh.")
 
@@ -225,8 +245,10 @@ def main() -> None:
         val_loss_list.append(val_loss)
         val_acc_list.append(val_acc)
 
+        scheduler.step(val_loss)
+        current_lr = optimizer.param_groups[0]["lr"]
         print(
-            f"📈 Epoch {epoch + 1}: train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | val_acc={val_acc:.2f}%"
+            f"📈 Epoch {epoch + 1}: train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | val_acc={val_acc:.2f}% | lr={current_lr:.3e}"
         )
 
         # Right after printing metrics, call simple utility wrappers
@@ -239,6 +261,7 @@ def main() -> None:
             val_loss_list,
             val_acc_list,
             best_val_acc,
+            scheduler=scheduler,
         )
 
         update_plots_csv(

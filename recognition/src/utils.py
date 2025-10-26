@@ -126,21 +126,22 @@ def save_checkpoint(
     train_loss_list: List[float],
     val_loss_list: List[float],
     val_acc_list: List[float],
+    scheduler: Optional[torch.optim.lr_scheduler.ReduceLROnPlateau] = None,
 ) -> None:
     """Save model/optimizer state along with training logs."""
     ensure_dir(os.path.dirname(checkpoint_path))
-    torch.save(
-        {
-            "epoch": epoch,
-            "model_state": model.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "train_loss_list": train_loss_list,
-            "val_loss_list": val_loss_list,
-            "val_acc_list": val_acc_list,
-            "timestamp": time.time(),
-        },
-        checkpoint_path,
-    )
+    payload: Dict[str, object] = {
+        "epoch": epoch,
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "train_loss_list": train_loss_list,
+        "val_loss_list": val_loss_list,
+        "val_acc_list": val_acc_list,
+        "timestamp": time.time(),
+    }
+    if scheduler is not None:
+        payload["scheduler_state"] = scheduler.state_dict()  # type: ignore[assignment]
+    torch.save(payload, checkpoint_path)
     print(f"💾 Saved checkpoint to: {checkpoint_path}")
 
 
@@ -148,12 +149,15 @@ def load_checkpoint(
     checkpoint_path: str,
     model: torch.nn.Module,
     optimizer: Optional[torch.optim.Optimizer] = None,
+    scheduler: Optional[torch.optim.lr_scheduler.ReduceLROnPlateau] = None,
 ) -> Tuple[int, List[float], List[float], List[float]]:
     """Load checkpoint; return (epoch, train_losses, val_losses, val_accs)."""
     data = torch.load(checkpoint_path, map_location="cpu")
     model.load_state_dict(data["model_state"])  # type: ignore[index]
     if optimizer is not None and "optimizer_state" in data:
         optimizer.load_state_dict(data["optimizer_state"])  # type: ignore[index]
+    if scheduler is not None and "scheduler_state" in data:
+        scheduler.load_state_dict(data["scheduler_state"])  # type: ignore[index]
     start_epoch = int(data.get("epoch", 0))
     train_loss_list = list(data.get("train_loss_list", []))
     val_loss_list = list(data.get("val_loss_list", []))
@@ -240,6 +244,7 @@ def save_checkpoints(
     val_loss_list: List[float],
     val_acc_list: List[float],
     best_val_acc: float,
+    scheduler: Optional[torch.optim.lr_scheduler.ReduceLROnPlateau] = None,
 ) -> float:
     """Save only rolling last and best checkpoints.
 
@@ -253,7 +258,14 @@ def save_checkpoints(
     # Always update the rolling "last.pt"
     last_ckpt = os.path.join(checkpoints_dir, "last.pt")
     save_checkpoint(
-        last_ckpt, model, optimizer, epoch, train_loss_list, val_loss_list, val_acc_list
+        last_ckpt,
+        model,
+        optimizer,
+        epoch,
+        train_loss_list,
+        val_loss_list,
+        val_acc_list,
+        scheduler=scheduler,
     )
 
     # If validation accuracy improved, also update "best.pt"
@@ -262,7 +274,14 @@ def save_checkpoints(
         best_val_acc = current_val_acc
         best_ckpt = os.path.join(checkpoints_dir, "best.pt")
         save_checkpoint(
-            best_ckpt, model, optimizer, epoch, train_loss_list, val_loss_list, val_acc_list
+            best_ckpt,
+            model,
+            optimizer,
+            epoch,
+            train_loss_list,
+            val_loss_list,
+            val_acc_list,
+            scheduler=scheduler,
         )
 
     return best_val_acc

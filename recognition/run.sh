@@ -38,8 +38,10 @@ EPOCHS="20"
 python -u -m src.train \
   --data-root "$DATA_ROOT" \
   --epochs "$EPOCHS" \
-  --batch-size 16 \
-  --lr 1e-3 \
+  --batch-size 32 \
+  --lr 1e-4 \
+  --weight-decay 1e-4 \
+  --classifier-dropout 0.3 \
   --resume \
   --checkpoints-dir runs/checkpoints \
   --plots-dir runs/metrics

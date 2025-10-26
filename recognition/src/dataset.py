@@ -338,8 +338,10 @@ def create_dataloaders(
 
     train_transform = T.Compose(
         [
-            T.Resize((224, 224)),
+            T.RandomResizedCrop(size=224, scale=(0.85, 1.0), ratio=(0.9, 1.1)),
             T.RandomHorizontalFlip(p=0.5),
+            T.RandomRotation(degrees=15, fill=0),
+            T.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.1),
             T.ToTensor(),
             T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ]
@@ -402,4 +404,3 @@ __all__ = [
     "create_dataloaders",
     "materialise_split_folders",
 ]
-
