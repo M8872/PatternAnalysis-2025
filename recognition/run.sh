@@ -6,18 +6,31 @@
 #SBATCH --time=00:20:00
 #SBATCH --output=runs/logs/%x-%j.out
 
+# Ensure we run from the directory containing this script (the recognition folder)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 # Create log/checkpoint dirs if they do not exist
 mkdir -p runs/logs runs/checkpoints runs/metrics
 
 # Quick GPU sanity print
 nvidia-smi || true
 
-# Activate environment
-source ~/miniconda3/etc/profile.d/conda.sh
-conda activate torch
+# Use headless backend for matplotlib on compute nodes
+export MPLBACKEND=Agg
 
-# Dataset root on Rangpur (contains AD_NC/train and AD_NC/test)
-DATA_ROOT="/home/groups/comp3710/ADNI/AD_NC"
+# Activate Python venv (pip-based). Override with VENV_PATH if different.
+VENV_PATH="${VENV_PATH:-$HOME/venvs/torch-venv}"
+if [[ -f "$VENV_PATH/bin/activate" ]]; then
+  source "$VENV_PATH/bin/activate"
+else
+  echo "Python venv not found at $VENV_PATH. Set VENV_PATH to your venv path." >&2
+  exit 1
+fi
+
+# Dataset root (must contain AD/ and CN/ subfolders with .nii/.nii.gz)
+: "${DATA_DIR:?Set DATA_DIR to your dataset root (contains AD/ and CN/)}"
+DATA_ROOT="$DATA_DIR"
 
 # Configure total target epochs (can be overridden by env EPOCHS)
 EPOCHS="${EPOCHS:-20}"
