@@ -38,7 +38,8 @@ def main() -> None:
     parser.add_argument("--data-root", type=str, default=default_data)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--slices-per-volume", type=int, default=4)
+    parser.add_argument("--train-ratio", type=float, default=0.7, help="Fraction of subjects assigned to the training split.")
+    parser.add_argument("--val-ratio", type=float, default=0.15, help="Fraction of subjects assigned to the validation split.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--checkpoints-dir", type=str, default="runs/checkpoints")
     parser.add_argument("--predictions-dir", type=str, default="runs/predictions")
@@ -52,11 +53,12 @@ def main() -> None:
     # --------- BUILD ONLY THE TEST DATALOADER ---------
     # We re-use the same helper so transforms/data config match training.
     _, _, test_loader = create_dataloaders(
-        root=args.data_root,
+        data_root=args.data_root,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        slices_per_volume=args.slices_per_volume,
         seed=args.seed,
+        train_ratio=args.train_ratio,
+        val_ratio=args.val_ratio,
     )
 
     # --------- BUILD MODEL AND LOAD LATEST CHECKPOINT ---------
@@ -93,5 +95,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 

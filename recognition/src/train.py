@@ -29,10 +29,7 @@ from tqdm import tqdm
 
 
 # ========= LOCAL IMPORTS =========
-from .dataset import (  # type: ignore
-    create_dataloaders,
-    create_dataloaders_from_image_folders,
-)
+from .dataset import create_dataloaders  # type: ignore
 from .modules import build_convnext_tiny  # type: ignore
 from .utils import (  # type: ignore
     ensure_dir,
@@ -142,11 +139,14 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--slices-per-volume", type=int, default=8)
+    parser.add_argument("--train-ratio", type=float, default=0.7, help="Fraction of subjects assigned to the training split.")
+    parser.add_argument("--val-ratio", type=float, default=0.15, help="Fraction of subjects assigned to the validation split.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--checkpoints-dir", type=str, default="runs/checkpoints")
     parser.add_argument("--plots-dir", type=str, default="runs/metrics")
+    parser.add_argument("--split-output-dir", type=str, default=None, help="Optional folder to mirror the subject split (symlinks by default).")
+    parser.add_argument("--copy-split", action="store_true", help="Copy files instead of symlinking when materialising the split.")
     args = parser.parse_args()
 
     # ========= SETUP SEED + DEVICE (determinism and GPU/CPU choice) =========
@@ -161,31 +161,27 @@ def main() -> None:
     ensure_dir(args.plots_dir)
 
     # ========= BUILD DATALOADERS (train/val/test) =========
-    # The dataset scans folders for NIfTI files and assigns labels (AD/CN).
-    print("📦 Scanning dataset and building DataLoaders...")
-    # Auto-detect dataset type:
-    # - If root has train/ and test/ subfolders, assume JPEG ImageFolder layout
-    # - Otherwise, assume NIfTI volumes under AD/ and CN/ directories
-    if os.path.isdir(os.path.join(args.data_root, "train")) and os.path.isdir(
-        os.path.join(args.data_root, "test")
-    ):
-        train_loader, val_loader, test_loader = create_dataloaders_from_image_folders(
-            root=args.data_root,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            seed=args.seed,
-        )
-    else:
-        train_loader, val_loader, test_loader = create_dataloaders(
-            root=args.data_root,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            slices_per_volume=args.slices_per_volume,
-            seed=args.seed,
-        )
-    print(
-        f"✅ Data ready: train={len(train_loader.dataset)}, val={len(val_loader.dataset)}, test={len(test_loader.dataset)}"
+    print("📦 Scanning dataset and building DataLoaders (subject-level split)...")
+    loaders = create_dataloaders(
+        data_root=args.data_root,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        train_ratio=args.train_ratio,
+        val_ratio=args.val_ratio,
+        seed=args.seed,
+        split_output_dir=args.split_output_dir,
+        copy_split=args.copy_split,
+        return_splits=True,
     )
+    train_loader, val_loader, test_loader, split_paths = loaders
+    print(
+        "✅ Data ready: "
+        f"train={len(train_loader.dataset)} slices, "
+        f"val={len(val_loader.dataset)}, "
+        f"test={len(test_loader.dataset)}"
+    )
+    for split_name in ("train", "val", "test"):
+        print(f"   • {split_name:<5} -> {len(split_paths.get(split_name, []))} files tracked")
 
     # ========= SETUP MODEL + LOSS + OPTIMIZER =========
     # Build a small ConvNeXt-like model implemented from scratch (no pretrained).
@@ -267,5 +263,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

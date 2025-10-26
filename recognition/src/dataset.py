@@ -1,382 +1,405 @@
 """
-Dataset and DataLoader utilities for simple Alzheimer's (AD vs CN) classification.
+Subject-level dataset utilities for AD vs NC MRI slice classification.
 
-This file converts 3D MRI NIfTI volumes into a small set of 2D axial slices
-that we can feed into a 2D image model (ConvNeXt-like Tiny). The goal is to keep
-everything very simple and very commented so beginners can follow.
-
-High-level steps:
-1) scan_adni(root): walk the directory and find NIfTI files with AD/CN labels
-2) MRISliceDataset: read a specific axial slice from each volume, turn into PIL
-3) create_dataloaders(...): split into train/val/test and wrap with DataLoader
-
-We keep ImageNet-style mean/std normalization as a simple default for 3-channel
-inputs, even though our model is trained from scratch. This is optional; you can
-disable it if you prefer to rely only on [0,1] scaling. We also replicate the
-single grayscale slice to 3 channels (RGB) to match the expected input shape for
-common CNN backbones.
+This module scans JPEG slices, groups them by subject ID (prefix before the
+first underscore), performs subject-level train/val/test splits, and builds
+PyTorch Dataset/DataLoader objects with safe transforms (augment train only).
 """
 
-# ========= IMPORTS =========
-import os
-import re
-from dataclasses import dataclass
-from typing import Callable, List, Optional, Sequence, Tuple
+from __future__ import annotations
 
-import nibabel as nib
-import numpy as np
+import os
+import random
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
+
 from PIL import Image
 import torch
 from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
-from torchvision.datasets import ImageFolder
 
+# Label constants (kept consistent with the rest of the project)
+AD_LABEL = 1
+NC_LABEL = 0
 
-# ========= CONSTANTS AND SIMPLE HELPERS =========
+# Folder names we recognise for each label
+LABELS_BY_DIRNAME = {"AD": AD_LABEL, "NC": NC_LABEL, "CN": NC_LABEL}
+LABEL_TO_NAME = {AD_LABEL: "AD", NC_LABEL: "NC"}
 
-AD_LABEL = 1  # Alzheimer's Disease (positive class)
-CN_LABEL = 0  # Cognitively Normal (control class)
+# Image extensions we will consider when scanning the folders.
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
-# ImageNet normalization stats for 3-channel inputs
+# Normalisation constants (ImageNet-style, works well for RGB CNN backbones)
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
-def _is_ad_path(path: str) -> bool:
-    """Return True if a directory path indicates the AD class.
+@dataclass(frozen=True)
+class SubjectRecord:
+    """All slices belonging to a single subject."""
 
-    We look for a whole path token named 'AD' (case-insensitive).
-    """
-    return bool(re.search(r"(^|/)(AD)(/|$)", path, flags=re.IGNORECASE))
-
-
-def _is_cn_path(path: str) -> bool:
-    """Return True if the path corresponds to the cognitively normal class.
-
-    Supports both 'CN' and 'NC' folder tokens because some datasets may name
-    the control group 'NC'. We only match whole path tokens (delimited by '/'
-    or start/end) to avoid accidental matches like 'scan'.
-    """
-    if re.search(r"(^|/)(CN)(/|$)", path, flags=re.IGNORECASE):
-        return True
-    if re.search(r"(^|/)(NC)(/|$)", path, flags=re.IGNORECASE):
-        return True
-    return False
-
-
-def scan_adni(root: str) -> List[Tuple[str, int]]:
-    """Recursively scan a root folder and build (path, label) pairs.
-
-    We assume a very simple folder structure where the path contains either
-    'AD' or 'CN' somewhere in the directory names. All .nii and .nii.gz
-    files are considered MRI volumes. This function does not load data; it
-    just collects paths and their inferred labels.
-    """
-    pairs: List[Tuple[str, int]] = []
-    for dirpath, _, filenames in os.walk(root):
-        for fname in filenames:
-            if fname.lower().endswith((".nii", ".nii.gz")):
-                fpath = os.path.join(dirpath, fname)
-                if _is_ad_path(dirpath):
-                    pairs.append((fpath, AD_LABEL))
-                elif _is_cn_path(dirpath):
-                    pairs.append((fpath, CN_LABEL))
-    return pairs
-
-
-def _normalize_volume_to_unit_range(volume: np.ndarray) -> np.ndarray:
-    """Normalize a 3D volume to the [0, 1] range.
-
-    We use 1st and 99th percentiles to be robust to outliers, then clip.
-    This keeps intensities consistent across scans and helps training.
-    """
-    v = volume.astype(np.float32)
-    v = np.nan_to_num(v)
-    v_min, v_max = np.percentile(v, 1.0), np.percentile(v, 99.0)
-    if v_max > v_min:
-        v = (v - v_min) / (v_max - v_min)
-    v = np.clip(v, 0.0, 1.0)
-    return v
-
-
-def _slice_indices_centered(num_slices: int, k: int) -> List[int]:
-    """Return k axial slice indices centered around the middle of the volume.
-
-    If the volume has fewer than k slices, we pad by repeating the last index
-    so that every volume contributes the same number of slices.
-    """
-    if num_slices <= 0:
-        return []
-    center = num_slices // 2
-    half = max(k // 2, 1)
-    indices = list(range(max(0, center - half), min(num_slices, center - half + k)))
-    # Pad if volume has fewer than k slices
-    while len(indices) < k and indices:
-        indices.append(indices[-1])
-    return indices[:k]
-
-
-@dataclass
-class MRISliceSpec:
-    """Tiny struct that describes exactly one (volume, slice) example.
-
-    - volume_path: where the NIfTI file lives on disk
-    - label: integer class (AD=1 or CN=0)
-    - slice_index: which axial slice to take from the 3D volume
-    """
-    volume_path: str
+    subject_id: str
     label: int
-    slice_index: int
+    image_paths: List[str]
 
 
-class MRISliceDataset(Dataset):
-    """A very simple 2D slice dataset built from 3D NIfTI MRI volumes.
+@dataclass(frozen=True)
+class ImageSample:
+    """Single slice and its metadata."""
 
-    What it does for each item:
-    1) Loads the NIfTI file
-    2) Picks one axial slice (by slice_index)
-    3) Converts it to a PIL grayscale image (so torchvision can process it)
-    4) Applies basic transforms (resize, to tensor)
-    5) Replicates channels to get 3xHxW (common CNNs expect 3 channels)
-    6) Normalizes using ImageNet mean/std (simple default; optional)
-    """
+    path: str
+    label: int
+    subject_id: str
 
-    def __init__(
-        self,
-        file_label_pairs: Sequence[Tuple[str, int]],
-        slices_per_volume: int = 8,
-        transform: Optional[Callable] = None,
-    ) -> None:
-        super().__init__()
-        self.file_label_pairs = list(file_label_pairs)
-        self.slices_per_volume = max(1, int(slices_per_volume))
-        # Default transform: resize + to tensor only. We normalize AFTER we
-        # replicate to 3 channels using ImageNet stats (see __getitem__).
-        self.transform = transform or T.Compose(
-            [
-                T.Resize((224, 224)),
-                T.ToTensor(),  # Grayscale -> [1, H, W], values in [0,1]
-            ]
+
+def _iter_image_files(directory: Path) -> Iterable[Path]:
+    """Yield image files under a directory (recursively)."""
+    for path in directory.rglob("*"):
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
+            yield path
+
+
+def _extract_subject_id(filename: str) -> str:
+    """Return the subject prefix before the first underscore."""
+    stem = Path(filename).stem
+    if "_" in stem:
+        return stem.split("_", 1)[0]
+    return stem
+
+
+def _index_subjects(source_dir: Path) -> List[SubjectRecord]:
+    """Group all slices under source_dir by subject and label."""
+    if not source_dir.is_dir():
+        raise FileNotFoundError(f"Folder not found: {source_dir}")
+
+    subjects_per_label: Dict[int, Dict[str, List[str]]] = {}
+    subject_label_map: Dict[str, int] = {}
+    found_any = False
+
+    for class_dir in sorted(source_dir.iterdir()):
+        if not class_dir.is_dir():
+            continue
+        label = LABELS_BY_DIRNAME.get(class_dir.name.upper())
+        if label is None:
+            continue
+        found_any = True
+        subject_bucket = subjects_per_label.setdefault(label, {})
+        for img_path in _iter_image_files(class_dir):
+            subject_id = _extract_subject_id(img_path.name)
+            prev_label = subject_label_map.get(subject_id)
+            if prev_label is not None and prev_label != label:
+                raise ValueError(
+                    f"Subject '{subject_id}' appears under multiple labels "
+                    f"('{LABEL_TO_NAME.get(prev_label, prev_label)}' and '{class_dir.name}')."
+                )
+            subject_label_map.setdefault(subject_id, label)
+            paths = subject_bucket.setdefault(subject_id, [])
+            paths.append(str(img_path.resolve()))
+
+    if not found_any or not subjects_per_label:
+        raise FileNotFoundError(
+            f"No AD/NC folders with JPEG slices found under {source_dir}."
         )
 
-        # Precompute which slices we will use for each volume for determinism.
-        # This makes __getitem__ simple and ensures we pick the same slices
-        # every run (important for reproducibility).
-        self.index_map: List[MRISliceSpec] = []
-        for path, label in self.file_label_pairs:
-            try:
-                img = nib.load(path)
-                data = img.get_fdata()
-                num_slices = data.shape[2] if data.ndim >= 3 else 0
-                indices = _slice_indices_centered(num_slices, self.slices_per_volume)
-                for s in indices:
-                    self.index_map.append(MRISliceSpec(path, label, s))
-            except Exception:
-                # Skip corrupted volumes quietly (student-friendly). In a
-                # production system we would log or raise, but here we want
-                # the script to keep going for learning purposes.
-                continue
+    records: List[SubjectRecord] = []
+    for label, subjects in subjects_per_label.items():
+        for subject_id, image_paths in subjects.items():
+            image_paths.sort()
+            records.append(SubjectRecord(subject_id=subject_id, label=label, image_paths=image_paths))
+
+    records.sort(key=lambda r: (r.label, r.subject_id))
+    return records
+
+
+def _compute_split_sizes(num_subjects: int, train_ratio: float, val_ratio: float) -> Tuple[int, int, int]:
+    """Convert ratios into exact subject counts."""
+    if num_subjects == 0:
+        return 0, 0, 0
+
+    if not (0.0 < train_ratio <= 1.0):
+        raise ValueError("train_ratio must be in (0, 1].")
+    if not (0.0 <= val_ratio <= 1.0):
+        raise ValueError("val_ratio must be in [0, 1].")
+    if train_ratio + val_ratio > 1.0 + 1e-6:
+        raise ValueError("train_ratio + val_ratio must be <= 1.0.")
+
+    test_ratio = max(0.0, 1.0 - train_ratio - val_ratio)
+    ratios = [train_ratio, val_ratio, test_ratio]
+    counts = [int(round(r * num_subjects)) for r in ratios]
+    diff = num_subjects - sum(counts)
+
+    # Balance rounding errors by distributing the remainder.
+    while diff != 0:
+        if diff > 0:
+            idx = min(range(3), key=lambda i: counts[i])
+            counts[idx] += 1
+            diff -= 1
+        else:
+            idx = max(range(3), key=lambda i: counts[i])
+            if counts[idx] == 0:
+                break
+            counts[idx] -= 1
+            diff += 1
+
+    # Ensure we have at least one subject for training when data exists.
+    if counts[0] == 0:
+        idx = 1 if counts[1] >= counts[2] else 2
+        if counts[idx] > 0:
+            counts[idx] -= 1
+            counts[0] = 1
+        else:
+            counts[0] = 1
+
+    counts = [max(0, c) for c in counts]
+    total = sum(counts)
+    if total != num_subjects:
+        counts[0] += num_subjects - total
+    return counts[0], counts[1], counts[2]
+
+
+def _split_subjects(
+    records: Sequence[SubjectRecord],
+    train_ratio: float,
+    val_ratio: float,
+    seed: int,
+) -> Tuple[List[SubjectRecord], List[SubjectRecord], List[SubjectRecord]]:
+    """Split subjects stratified by label."""
+    rng = random.Random(seed)
+    by_label: Dict[int, List[SubjectRecord]] = {}
+    for record in records:
+        by_label.setdefault(record.label, []).append(record)
+
+    train_set: List[SubjectRecord] = []
+    val_set: List[SubjectRecord] = []
+    test_set: List[SubjectRecord] = []
+
+    for label, subjects in by_label.items():
+        subjects_copy = subjects.copy()
+        rng.shuffle(subjects_copy)
+        n_train, n_val, n_test = _compute_split_sizes(len(subjects_copy), train_ratio, val_ratio)
+        train_set.extend(subjects_copy[:n_train])
+        val_set.extend(subjects_copy[n_train : n_train + n_val])
+        test_set.extend(subjects_copy[n_train + n_val : n_train + n_val + n_test])
+
+    rng.shuffle(train_set)
+    rng.shuffle(val_set)
+    rng.shuffle(test_set)
+    return train_set, val_set, test_set
+
+
+def _expand_records(records: Sequence[SubjectRecord]) -> List[ImageSample]:
+    """Flatten SubjectRecord objects into per-slice ImageSample entries."""
+    samples: List[ImageSample] = []
+    for record in records:
+        for path in record.image_paths:
+            samples.append(ImageSample(path=path, label=record.label, subject_id=record.subject_id))
+    samples.sort(key=lambda s: (s.subject_id, s.path))
+    return samples
+
+
+def _summarise_split(split: Sequence[ImageSample]) -> Tuple[int, int]:
+    """Return number of unique subjects and total slices inside a split."""
+    unique_subjects = {sample.subject_id for sample in split}
+    return len(unique_subjects), len(split)
+
+
+def _print_split_summary(splits: Dict[str, Sequence[ImageSample]], seed: int) -> None:
+    """Log a short human-readable summary to confirm subject-level splitting."""
+    print(f"Subject-level split summary (seed={seed}):")
+    for name in ("train", "val", "test"):
+        split = splits.get(name, ())
+        n_subjects, n_slices = _summarise_split(split)
+        label_subjects: Dict[int, set] = {}
+        for sample in split:
+            label_subjects.setdefault(sample.label, set()).add(sample.subject_id)
+        if label_subjects:
+            label_summary = ", ".join(
+                f"{LABEL_TO_NAME.get(label, str(label))}:{len(subjects)}"
+                for label, subjects in sorted(label_subjects.items())
+            )
+        else:
+            label_summary = "none"
+        print(
+            f"  {name:<5} -> {n_subjects:3d} unique subjects ({label_summary}); "
+            f"{n_slices:4d} slices"
+        )
+
+
+class SubjectImageDataset(Dataset):
+    """Torch Dataset for subject-level image samples."""
+
+    def __init__(self, samples: Sequence[ImageSample], transform: Optional[T.Compose] = None) -> None:
+        self.samples: List[ImageSample] = list(samples)
+        self.transform = transform
 
     def __len__(self) -> int:
-        return len(self.index_map)
+        return len(self.samples)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        # Look up which (volume, slice) we need for this index.
-        spec = self.index_map[idx]
+        sample = self.samples[idx]
+        try:
+            with Image.open(sample.path) as img:
+                image = img.convert("RGB")
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(f"Missing image file: {sample.path}") from exc
 
-        # Load the NIfTI volume from disk and get the data as a numpy array.
-        img = nib.load(spec.volume_path)
-        vol = img.get_fdata()
-
-        # Normalize intensities to [0, 1] so the network sees consistent values.
-        vol = _normalize_volume_to_unit_range(vol)
-
-        # Use axial plane (H, W, D), select a specific slice.
-        if vol.ndim == 3:
-            slice_2d = vol[:, :, spec.slice_index]
-        else:
-            # Unexpected extra channels/time dimension – take the first channel.
-            slice_2d = vol[:, :, spec.slice_index, 0]
-
-        # Convert to PIL grayscale image for torchvision transforms.
-        slice_uint8 = (slice_2d * 255.0).astype(np.uint8)
-        pil_img = Image.fromarray(slice_uint8, mode="L")
-
-        x = self.transform(pil_img)  # [1, H, W]
-        # Replicate to 3 channels for ConvNeXt/ResNet-style backbones.
-        x = x.repeat(3, 1, 1)  # [3, H, W]
-        # Apply ImageNet normalization after replication.
-        x = T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)(x)
-        y = int(spec.label)
-        return x, y
+        if self.transform:
+            image = self.transform(image)
+        return image, sample.label
 
 
-def _stratified_split(
-    pairs: List[Tuple[str, int]],
-    train_ratio: float = 0.7,
-    val_ratio: float = 0.15,
-    seed: int = 42,
-) -> Tuple[List[Tuple[str, int]], List[Tuple[str, int]], List[Tuple[str, int]]]:
-    """Stratified volume-level split by label (AD vs CN).
+def materialise_split_folders(
+    splits: Dict[str, Sequence[ImageSample]],
+    output_root: Union[str, Path],
+    copy_files: bool = False,
+) -> None:
+    """Optional helper to mirror the split into dataset_split/train|val|test folders."""
+    root = Path(output_root)
+    root.mkdir(parents=True, exist_ok=True)
 
-    We split AD and CN groups separately, then combine them. This keeps the
-    class balance similar across train/val/test. We also shuffle with a fixed
-    seed so that runs are deterministic.
-    """
-    rng = np.random.RandomState(seed)
-    ad = [p for p in pairs if p[1] == AD_LABEL]
-    cn = [p for p in pairs if p[1] == CN_LABEL]
+    for split_name, samples in splits.items():
+        for sample in samples:
+            class_dir = LABEL_TO_NAME.get(sample.label, str(sample.label))
+            dest_dir = root / split_name / class_dir
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            src_path = Path(sample.path)
+            filename = src_path.name
+            dest_path = dest_dir / filename
+            if dest_path.exists():
+                dest_path = dest_dir / f"{sample.subject_id}_{filename}"
+                if dest_path.exists():
+                    # Skip duplicates if they already exist.
+                    continue
 
-    def split_one(group: List[Tuple[str, int]]):
-        idx = np.arange(len(group))
-        rng.shuffle(idx)
-        n = len(group)
-        n_train = int(round(train_ratio * n))
-        n_val = int(round(val_ratio * n))
-        train_idx = idx[:n_train]
-        val_idx = idx[n_train : n_train + n_val]
-        test_idx = idx[n_train + n_val :]
-        return [group[i] for i in train_idx], [group[i] for i in val_idx], [group[i] for i in test_idx]
-
-    ad_tr, ad_va, ad_te = split_one(ad)
-    cn_tr, cn_va, cn_te = split_one(cn)
-
-    train = ad_tr + cn_tr
-    val = ad_va + cn_va
-    test = ad_te + cn_te
-    rng.shuffle(train)
-    rng.shuffle(val)
-    rng.shuffle(test)
-    return train, val, test
+            if copy_files:
+                shutil.copy2(src_path, dest_path)
+            else:
+                try:
+                    os.symlink(src_path, dest_path)
+                except (FileExistsError, OSError):
+                    # Fallback to copy if symlinks are unsupported (Windows without perms).
+                    shutil.copy2(src_path, dest_path)
 
 
 def create_dataloaders(
-    root: str,
+    data_root: Union[str, Path],
     batch_size: int = 32,
     num_workers: int = 4,
-    slices_per_volume: int = 8,
-    seed: int = 42,
-) -> Tuple[DataLoader, DataLoader, DataLoader]:
-    """Scan ADNI-like folders, split, build datasets, and return DataLoaders.
-
-    The loaders include common DataLoader options like pin_memory and
-    persistent_workers to be nice on GPU systems. The batch sizes and slice
-    counts are all configurable via function arguments (or CLI in train.py).
-    """
-    pairs = scan_adni(root)
-    if len(pairs) == 0:
-        raise FileNotFoundError(
-            f"No NIfTI files found under '{root}'. Expected 'AD' and 'CN' folders."
-        )
-
-    train_pairs, val_pairs, test_pairs = _stratified_split(pairs, seed=seed)
-
-    # Keep transforms simple; normalization is applied in __getitem__ after we
-    # convert to 3 channels, so we omit normalization here.
-    transform = T.Compose([T.Resize((224, 224)), T.ToTensor()])
-
-    train_ds = MRISliceDataset(train_pairs, slices_per_volume=slices_per_volume, transform=transform)
-    val_ds = MRISliceDataset(val_pairs, slices_per_volume=max(2, slices_per_volume // 2), transform=transform)
-    test_ds = MRISliceDataset(test_pairs, slices_per_volume=max(2, slices_per_volume // 2), transform=transform)
-
-    # CUDA pin_memory speeds up host->device transfers; persistent_workers keeps
-    # worker processes alive between epochs for a small speed boost.
-    pin = torch.cuda.is_available()
-    persistent = num_workers > 0
-    train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers,
-        pin_memory=pin, persistent_workers=persistent
-    )
-    val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers,
-        pin_memory=pin, persistent_workers=persistent
-    )
-    test_loader = DataLoader(
-        test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers,
-        pin_memory=pin, persistent_workers=persistent
-    )
-    return train_loader, val_loader, test_loader
-
-
-def create_dataloaders_from_image_folders(
-    root: str,
-    batch_size: int = 32,
-    num_workers: int = 4,
-    seed: int = 42,
+    train_ratio: float = 0.7,
     val_ratio: float = 0.15,
-) -> Tuple[DataLoader, DataLoader, DataLoader]:
-    """Build DataLoaders from a simple ImageFolder structure with JPEGs.
-
-    Expected layout under 'root':
-      root/
-        train/
-          AD/
-            image1.jpeg, image2.jpeg, ...
-          CN/
-            image3.jpeg, image4.jpeg, ...
-        test/
-          AD/
-          CN/
-
-    We split the provided 'train/' into (train, val) using a fixed seed for
-    determinism. Transforms resize to 224 and apply ImageNet normalization so
-    the inputs match ConvNeXt expectations.
+    seed: int = 42,
+    split_output_dir: Optional[Union[str, Path]] = None,
+    copy_split: bool = False,
+    return_splits: bool = False,
+) -> Union[
+    Tuple[DataLoader, DataLoader, DataLoader],
+    Tuple[DataLoader, DataLoader, DataLoader, Dict[str, List[str]]],
+]:
     """
-    # Validate that the required directories exist
-    train_dir = os.path.join(root, "train")
-    test_dir = os.path.join(root, "test")
-    if not (os.path.isdir(train_dir) and os.path.isdir(test_dir)):
-        raise FileNotFoundError(f"Expected '{root}/train' and '{root}/test'")
+    Build DataLoaders with subject-level splits to avoid data leakage.
 
-    # Define transforms: resize, to tensor, then ImageNet normalization
-    transform = T.Compose([
-        T.Resize((224, 224)),
-        T.ToTensor(),
-        T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-    ])
+    Parameters
+    ----------
+    data_root:
+        Path to the dataset root (expects train/AD/ and train/NC/ inside).
+    train_ratio / val_ratio:
+        Fractions of subjects assigned to train and validation splits.
+        The remainder is used for the test split.
+    split_output_dir:
+        Optional folder to populate with the split (symlinks by default).
+    copy_split:
+        When True, copy files instead of creating symlinks.
+    return_splits:
+        When True, also return {split_name: [file paths]} for inspection.
+    """
+    root = Path(data_root)
+    train_dir = root / "train"
+    records = _index_subjects(train_dir)
 
-    # Load full training dataset, then create a deterministic split
-    full_train = ImageFolder(train_dir, transform=transform)
-    n_total = len(full_train)
-    # Compute split sizes (ensure at least 1 train sample)
-    n_val = int(round(val_ratio * n_total))
-    n_train = max(1, n_total - n_val)
+    train_records, val_records, test_records = _split_subjects(records, train_ratio, val_ratio, seed)
+    train_samples = _expand_records(train_records)
+    val_samples = _expand_records(val_records)
+    test_samples = _expand_records(test_records)
 
-    generator = torch.Generator().manual_seed(seed)
-    train_ds, val_ds = torch.utils.data.random_split(
-        full_train, [n_train, n_val], generator=generator
+    if not train_samples:
+        raise ValueError("Subject split produced an empty training set. Adjust the ratios or check the data.")
+
+    split_samples: Dict[str, List[ImageSample]] = {
+        "train": train_samples,
+        "val": val_samples,
+        "test": test_samples,
+    }
+    _print_split_summary(split_samples, seed=seed)
+
+    if split_output_dir is not None:
+        materialise_split_folders(split_samples, split_output_dir, copy_files=copy_split)
+
+    train_transform = T.Compose(
+        [
+            T.Resize((224, 224)),
+            T.RandomHorizontalFlip(p=0.5),
+            T.ToTensor(),
+            T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
     )
-    test_ds = ImageFolder(test_dir, transform=transform)
+    eval_transform = T.Compose(
+        [
+            T.Resize((224, 224)),
+            T.ToTensor(),
+            T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
 
-    # DataLoader settings appropriate for GPU training
-    pin = torch.cuda.is_available()
+    train_dataset = SubjectImageDataset(train_samples, transform=train_transform)
+    val_dataset = SubjectImageDataset(val_samples, transform=eval_transform)
+    test_dataset = SubjectImageDataset(test_samples, transform=eval_transform)
+
+    pin_memory = torch.cuda.is_available()
     persistent = num_workers > 0
 
     train_loader = DataLoader(
-        train_ds,
+        train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=pin,
+        pin_memory=pin_memory,
         persistent_workers=persistent,
     )
     val_loader = DataLoader(
-        val_ds,
+        val_dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=pin,
+        pin_memory=pin_memory,
         persistent_workers=persistent,
     )
     test_loader = DataLoader(
-        test_ds,
+        test_dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=pin,
+        pin_memory=pin_memory,
         persistent_workers=persistent,
     )
 
+    if return_splits:
+        split_paths = {
+            split_name: [sample.path for sample in samples]
+            for split_name, samples in split_samples.items()
+        }
+        return train_loader, val_loader, test_loader, split_paths
+
     return train_loader, val_loader, test_loader
 
+
+__all__ = [
+    "AD_LABEL",
+    "NC_LABEL",
+    "ImageSample",
+    "SubjectImageDataset",
+    "create_dataloaders",
+    "materialise_split_folders",
+]
 

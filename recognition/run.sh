@@ -4,7 +4,8 @@
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --time=00:20:00
-#SBATCH --output=runs/logs/%x-%j.out
+#SBATCH --output=$HOME/recognition/runs/logs/%x-%j.out
+
 
 # Always run from the project directory so outputs land in ~/recognition/runs
 cd "$HOME/recognition"
