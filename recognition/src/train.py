@@ -206,7 +206,6 @@ def main() -> None:
         factor=args.scheduler_factor,
         patience=args.scheduler_patience,
         min_lr=args.scheduler_min_lr,
-        verbose=True,
     )
 
     # ========= OPTIONAL: RESUME FROM CHECKPOINT =========

@@ -43,6 +43,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--checkpoints-dir", type=str, default="runs/checkpoints")
     parser.add_argument("--predictions-dir", type=str, default="runs/predictions")
+    parser.add_argument("--classifier-dropout", type=float, default=0.3, help="Dropout probability for the classifier head (match training).")
     args = parser.parse_args()
 
     # --------- SETUP SEED + DEVICE ---------
@@ -62,7 +63,7 @@ def main() -> None:
     )
 
     # --------- BUILD MODEL AND LOAD LATEST CHECKPOINT ---------
-    model = build_convnext_tiny(num_classes=2).to(device)
+    model = build_convnext_tiny(num_classes=2, classifier_dropout=args.classifier_dropout).to(device)
     latest = find_latest_checkpoint(args.checkpoints_dir)
     if latest is None:
         raise FileNotFoundError(f"No checkpoint found in {args.checkpoints_dir}. Train first.")
@@ -83,16 +84,30 @@ def main() -> None:
             all_preds.extend(preds)
             all_targets.extend(targets.tolist())
 
-    # --------- SAVE A VERY SIMPLE TEXT FILE WITH PREDICTIONS ---------
-    # This is intentionally a tiny format so you can open it with any editor.
-    save_path = os.path.join(args.predictions_dir, "predictions.txt")
-    with open(save_path, "w") as f:
-        f.write("index,target,pred\n")
-        for i, (t, p) in enumerate(zip(all_targets, all_preds)):
-            f.write(f"{i},{t},{p}\n")
-    print(f"📝 Saved predictions to: {save_path}")
+    total_samples = len(all_targets)
+    correct_flags = [int(t == p) for t, p in zip(all_targets, all_preds)]
+    num_correct = sum(correct_flags)
+    accuracy = 100.0 * num_correct / max(total_samples, 1)
+
+    # --------- SAVE DETAILED CSV LOG ---------
+    csv_path = os.path.join(args.predictions_dir, "test_log.csv")
+    with open(csv_path, "w") as f:
+        f.write("index,target,pred,correct\n")
+        for idx, (t, p, c) in enumerate(zip(all_targets, all_preds, correct_flags)):
+            f.write(f"{idx},{t},{p},{c}\n")
+    print(f"📝 Saved prediction CSV to: {csv_path}")
+
+    # --------- SAVE SUMMARY TEXT ---------
+    summary_path = os.path.join(args.predictions_dir, "test_summary.txt")
+    with open(summary_path, "w") as f:
+        f.write(
+            f"Tested {total_samples} images.\n"
+            f"Correct predictions: {num_correct}\n"
+            f"Accuracy: {accuracy:.2f}%\n"
+        )
+    print(f"📄 Saved summary to: {summary_path}")
+    print(f"✅ Test accuracy: {accuracy:.2f}% ({num_correct}/{total_samples})")
 
 
 if __name__ == "__main__":
     main()
-
