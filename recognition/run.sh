@@ -6,9 +6,8 @@
 #SBATCH --time=00:20:00
 #SBATCH --output=runs/logs/%x-%j.out
 
-# Ensure we run from the directory containing this script (the recognition folder)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+# Always run from the project directory so outputs land in ~/recognition/runs
+cd "$HOME/recognition"
 
 # Create log/checkpoint dirs if they do not exist
 mkdir -p runs/logs runs/checkpoints runs/metrics
@@ -19,24 +18,22 @@ nvidia-smi || true
 # Use headless backend for matplotlib on compute nodes
 export MPLBACKEND=Agg
 
-# Activate Python venv (pip-based). Override with VENV_PATH if different.
-VENV_PATH="${VENV_PATH:-$HOME/venvs/torch-venv}"
+# Activate Python venv (fixed location)
+VENV_PATH="$HOME/venvs/torch-venv"
 if [[ -f "$VENV_PATH/bin/activate" ]]; then
   source "$VENV_PATH/bin/activate"
 else
-  echo "Python venv not found at $VENV_PATH. Set VENV_PATH to your venv path." >&2
+  echo "Python venv not found at $VENV_PATH" >&2
   exit 1
 fi
 
-# Dataset root (must contain AD/ and CN/ subfolders with .nii/.nii.gz)
-# Default to the shared ADNI path; can be overridden by exporting DATA_DIR
-DATA_DIR="${DATA_DIR:-/home/groups/comp3710/ADNI}"
-DATA_ROOT="$DATA_DIR"
+# Dataset root (JPEG ImageFolder layout under AD_NC/{train,test}/{AD,CN})
+DATA_ROOT="/home/groups/comp3710/ADNI/AD_NC"
 
-# Configure total target epochs (can be overridden by env EPOCHS)
-EPOCHS="${EPOCHS:-20}"
+# Configure total target epochs (fixed)
+EPOCHS="20"
 
-# Run training (resumable across jobs) from repo root using module mode
+# Run training (resumable across jobs) using local package path
 python -u -m src.train \
   --data-root "$DATA_ROOT" \
   --epochs "$EPOCHS" \

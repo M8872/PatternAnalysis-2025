@@ -29,7 +29,10 @@ from tqdm import tqdm
 
 
 # ========= LOCAL IMPORTS =========
-from .dataset import create_dataloaders  # type: ignore
+from .dataset import (  # type: ignore
+    create_dataloaders,
+    create_dataloaders_from_image_folders,
+)
 from .modules import build_convnext_tiny  # type: ignore
 from .utils import (  # type: ignore
     ensure_dir,
@@ -159,14 +162,27 @@ def main() -> None:
 
     # ========= BUILD DATALOADERS (train/val/test) =========
     # The dataset scans folders for NIfTI files and assigns labels (AD/CN).
-    print("📦 Scanning ADNI dataset and building DataLoaders...")
-    train_loader, val_loader, test_loader = create_dataloaders(
-        root=args.data_root,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        slices_per_volume=args.slices_per_volume,
-        seed=args.seed,
-    )
+    print("📦 Scanning dataset and building DataLoaders...")
+    # Auto-detect dataset type:
+    # - If root has train/ and test/ subfolders, assume JPEG ImageFolder layout
+    # - Otherwise, assume NIfTI volumes under AD/ and CN/ directories
+    if os.path.isdir(os.path.join(args.data_root, "train")) and os.path.isdir(
+        os.path.join(args.data_root, "test")
+    ):
+        train_loader, val_loader, test_loader = create_dataloaders_from_image_folders(
+            root=args.data_root,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            seed=args.seed,
+        )
+    else:
+        train_loader, val_loader, test_loader = create_dataloaders(
+            root=args.data_root,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            slices_per_volume=args.slices_per_volume,
+            seed=args.seed,
+        )
     print(
         f"✅ Data ready: train={len(train_loader.dataset)}, val={len(val_loader.dataset)}, test={len(test_loader.dataset)}"
     )

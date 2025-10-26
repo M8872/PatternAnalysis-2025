@@ -29,6 +29,7 @@ from PIL import Image
 import torch
 from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as T
+from torchvision.datasets import ImageFolder
 
 
 # ========= CONSTANTS AND SIMPLE HELPERS =========
@@ -294,6 +295,88 @@ def create_dataloaders(
         test_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers,
         pin_memory=pin, persistent_workers=persistent
     )
+    return train_loader, val_loader, test_loader
+
+
+def create_dataloaders_from_image_folders(
+    root: str,
+    batch_size: int = 32,
+    num_workers: int = 4,
+    seed: int = 42,
+    val_ratio: float = 0.15,
+) -> Tuple[DataLoader, DataLoader, DataLoader]:
+    """Build DataLoaders from a simple ImageFolder structure with JPEGs.
+
+    Expected layout under 'root':
+      root/
+        train/
+          AD/
+            image1.jpeg, image2.jpeg, ...
+          CN/
+            image3.jpeg, image4.jpeg, ...
+        test/
+          AD/
+          CN/
+
+    We split the provided 'train/' into (train, val) using a fixed seed for
+    determinism. Transforms resize to 224 and apply ImageNet normalization so
+    the inputs match ConvNeXt expectations.
+    """
+    # Validate that the required directories exist
+    train_dir = os.path.join(root, "train")
+    test_dir = os.path.join(root, "test")
+    if not (os.path.isdir(train_dir) and os.path.isdir(test_dir)):
+        raise FileNotFoundError(f"Expected '{root}/train' and '{root}/test'")
+
+    # Define transforms: resize, to tensor, then ImageNet normalization
+    transform = T.Compose([
+        T.Resize((224, 224)),
+        T.ToTensor(),
+        T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+    ])
+
+    # Load full training dataset, then create a deterministic split
+    full_train = ImageFolder(train_dir, transform=transform)
+    n_total = len(full_train)
+    # Compute split sizes (ensure at least 1 train sample)
+    n_val = int(round(val_ratio * n_total))
+    n_train = max(1, n_total - n_val)
+
+    generator = torch.Generator().manual_seed(seed)
+    train_ds, val_ds = torch.utils.data.random_split(
+        full_train, [n_train, n_val], generator=generator
+    )
+    test_ds = ImageFolder(test_dir, transform=transform)
+
+    # DataLoader settings appropriate for GPU training
+    pin = torch.cuda.is_available()
+    persistent = num_workers > 0
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin,
+        persistent_workers=persistent,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin,
+        persistent_workers=persistent,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin,
+        persistent_workers=persistent,
+    )
+
     return train_loader, val_loader, test_loader
 
 
