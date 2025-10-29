@@ -63,7 +63,52 @@ transforms.Compose([
 So we didnt group by subjects, so the model achieved crazy accuracy.
 But this was cheating. Model wasnt learning.
 
+  -- 20 epochs
+  --batch-size 16 
+  --lr 1e-3 
+
 ## 2. (72%) Model was clearly overfitting
 Model was overfitting.
 We see plateau at 72% accuracy.
 Train loss dec, val loss inc.
+
+Plateud after like 12
+
+  -- 20 epochs
+  --batch-size 16 
+  --lr 1e-3 
+
+### 3. (86%) 
+
+1. Half learning rate
+    1e-3 to 1e-4
+Scheduler
+halves learning rate when val loss plateus
+
+faster early learning,
+later, we get finer tuning
+
+2. Dropout in classifier head
+* forces model to learn patterns
+* reduces model from overfitting
+    - reduce validation loss from increasing
+* reduces model from memorisatio
+
+3. enable weight decay
+reduces memorizing tiny image details
+
+
+4. Data Augmentation
+* data very clean
+* gives it some fake chaos.
+    - makes it learns patterns better
+    - less learning on exact pixels
+* alzheimers is alzeheimers, even if upside down
+
+
+
+5. Increase batch size
+* reduce gradient noise.
+16- 32
+
+6. Epoch from 20 to 50

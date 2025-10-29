@@ -189,6 +189,12 @@ def main() -> None:
     for split_name in ("train", "val", "test"):
         print(f"   • {split_name:<5} -> {len(split_paths.get(split_name, []))} files tracked")
 
+
+
+
+
+
+
     # ========= SETUP MODEL + LOSS + OPTIMIZER =========
     # Build a small ConvNeXt-like model implemented from scratch (no pretrained).
     model = build_convnext_tiny(num_classes=2, classifier_dropout=args.classifier_dropout).to(device)
@@ -208,6 +214,11 @@ def main() -> None:
         min_lr=args.scheduler_min_lr,
     )
 
+
+
+
+
+
     # ========= OPTIONAL: RESUME FROM CHECKPOINT =========
     # If --resume is passed, we try to load the latest checkpoint and continue.
     start_epoch = 0
@@ -226,6 +237,10 @@ def main() -> None:
             best_val_acc = max(val_acc_list)
     elif args.resume:
         print("ℹ️ --resume set but no checkpoint found. Starting fresh.")
+
+
+
+
 
     # ========= BEGIN TRAINING (loop over epochs) =========
     total_epochs = args.epochs
