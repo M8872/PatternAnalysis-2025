@@ -137,7 +137,7 @@ Outputs to look at:
 
 ## Curves
 
-![Loss and Validation Accuracy](recognition/runs/metrics/loss_acc_epoch.png)
+![Loss and Validation Accuracy](loss_acc_epoch.png)
 
 ## What I’d try next
 
