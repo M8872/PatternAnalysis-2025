@@ -1,7 +1,7 @@
 # Alzheimer’s Disease Classification from MRI Slices (AD vs NC)
 
 ## 1) Problem
-We are classifying Alzheimer’s Disease (AD) vs Normal Control (NC) from 2D MRI brain slices derived from the ADNI dataset. The goal is to learn discriminative patterns that generalise across subjects rather than memorising subject identity. The core challenge is data leakage: multiple slices per subject exist, so improper splitting can inflate validation accuracy without reflecting real generalisation.
+We are classifying Alzheimer’s Disease (AD) vs Normal Control (NC) from 2D MRI brain slices derived from the ADNI dataset. This is a challenging binary medical‑imaging task because MRI appearance varies across scanners/sites and patients, class differences can be subtle, and datasets are relatively small—making regularisation and careful evaluation important. Our focus is on learning signals that generalise to unseen subjects rather than overfitting to idiosyncrasies of the training data.
 
 ### Example input
 
@@ -23,12 +23,11 @@ I implemented a custom, tiny ConvNeXt-like CNN in PyTorch. Each stage uses depth
 5. At evaluation, we run the latest checkpoint on the test set and report accuracy.
 
 ## 4) Results
-- Validation accuracy stabilised around ~86–87% by late epochs.
-- Final held‑out test accuracy: 88.11% (3,220 images; 2,837 correct).
 
 ### Training curves
 
 ![Loss and Validation Accuracy](train_curve.png)
+- Validation accuracy stabilised around ~86–87% by late epochs.
 
 ### Test results
 ```
@@ -38,7 +37,7 @@ Accuracy: 88.11%
 ```
 
 ## 5) Pre‑processing and split justification
-- Image loading: slices are opened with PIL and converted to RGB (`.convert("RGB")`). Grayscale inputs become three identical channels, which keeps transforms and the model’s `in_channels=3` consistent.
+- Image loading: slices are opened with PIL and converted to RGB (`.convert("RGB")`). Grayscale inputs become three identical channels. This keeps transforms and the model’s `in_channels=3` consistent and aligns with pretrained ConvNeXt models that expect 3‑channel RGB inputs.
 - Normalisation: ImageNet mean/std to stabilise optimisation of RGB CNN backbones.
 - Training transforms (aug only on train): random resized crop (224×224), horizontal flip (p=0.5), small rotation (±15°), and light color jitter. These simulate plausible variability and reduce overfitting while preserving anatomy.
 - Validation/Test transforms: resize to 224×224 + normalise.
@@ -60,8 +59,6 @@ References (for transform/common practice):
 Reproducibility:
 - Fixed random seed (default `--seed 42`).
 - Deterministic split by subject using the same seed.
-- Logged metrics (`runs/metrics/train_log.csv`, `metrics.json`) and curves (`train_curve.png`).
-- Checkpoints: `runs/checkpoints/last.pt` and `best.pt` to resume exactly.
 
 ## 7) Example inputs, outputs, and plots
 - Input (single slice): 224×224 RGB tensor (from a grayscale JPEG converted to RGB).
@@ -90,26 +87,25 @@ with torch.no_grad():
 
 ## 8) Training/Testing commands (examples)
 Train (50 epochs, subject split 70/15/15):
-  ```bash
-  python -u -m src.train \
-    --data-root /path/to/AD_NC \
-    --epochs 50 \
-    --batch-size 32 \
-    --lr 1e-4 \
-    --weight-decay 1e-4 \
-    --classifier-dropout 0.3 \
-    --checkpoints-dir runs/checkpoints \
-    --plots-dir runs/metrics
-  ```
+```bash
+python -u -m src.train \
+  --data-root /path/to/AD_NC \
+  --epochs 50 \
+  --batch-size 32 \
+  --lr 1e-4 \
+  --weight-decay 1e-4 \
+  --classifier-dropout 0.3 \
+  --checkpoints-dir runs/checkpoints \
+  --plots-dir runs/metrics
+```
+
 
 Evaluate on test:
-  ```bash
-  python -u -m src.predict \
-    --data-root /path/to/AD_NC \
-    --batch-size 64 \
-    --checkpoints-dir runs/checkpoints \
-    --predictions-dir runs/test
-  ```
+```bash
+python -u -m src.predict \
+  --data-root /path/to/AD_NC \
+  --batch-size 64 \
+  --checkpoints-dir runs/checkpoints \
+  --predictions-dir runs/predictions
+```
 
----
-If needed, subject‑level ensembling (averaging slice probabilities per subject) can be added to produce per‑subject decisions rather than per‑slice predictions.
