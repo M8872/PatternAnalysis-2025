@@ -1,30 +1,0 @@
-Sun Oct 26 15:36:15 2025       
-+---------------------------------------------------------------------------------------+
-| NVIDIA-SMI 535.129.03             Driver Version: 535.129.03   CUDA Version: 12.2     |
-|-----------------------------------------+----------------------+----------------------+
-| GPU  Name                 Persistence-M | Bus-Id        Disp.A | Volatile Uncorr. ECC |
-| Fan  Temp   Perf          Pwr:Usage/Cap |         Memory-Usage | GPU-Util  Compute M. |
-|                                         |                      |               MIG M. |
-|=========================================+======================+======================|
-|   0  NVIDIA A100-PCIE-40GB          Off | 00000000:0B:00.0 Off |                    0 |
-| N/A   28C    P0              33W / 250W |      4MiB / 40960MiB |      0%      Default |
-|                                         |                      |             Disabled |
-+-----------------------------------------+----------------------+----------------------+
-                                                                                         
-+---------------------------------------------------------------------------------------+
-| Processes:                                                                            |
-|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
-|        ID   ID                                                             Usage      |
-|=======================================================================================|
-|  No running processes found                                                           |
-+---------------------------------------------------------------------------------------+
-🖥️ Using device: cuda
-Subject-level split summary (seed=42):
-  train -> 753 unique subjects (NC:389, AD:364); 15060 slices
-  val   -> 162 unique subjects (NC:84, AD:78); 3240 slices
-  test  -> 161 unique subjects (NC:83, AD:78); 3220 slices
-🕒 Loaded checkpoint from epoch 50
-🕒 Loaded checkpoint: runs/checkpoints/last.pt
-🔮 Predict:   0%|          | 0/51 [00:00<?, ?it/s]🔮 Predict:   2%|▏         | 1/51 [00:00<00:43,  1.16it/s]🔮 Predict:  10%|▉         | 5/51 [00:00<00:07,  6.49it/s]🔮 Predict:  18%|█▊        | 9/51 [00:01<00:04,  8.64it/s]🔮 Predict:  25%|██▌       | 13/51 [00:01<00:03,  9.70it/s]🔮 Predict:  33%|███▎      | 17/51 [00:01<00:03, 11.33it/s]🔮 Predict:  41%|████      | 21/51 [00:02<00:02, 13.04it/s]🔮 Predict:  49%|████▉     | 25/51 [00:02<00:01, 14.47it/s]🔮 Predict:  57%|█████▋    | 29/51 [00:02<00:01, 15.30it/s]🔮 Predict:  65%|██████▍   | 33/51 [00:02<00:01, 16.95it/s]🔮 Predict:  73%|███████▎  | 37/51 [00:03<00:00, 14.66it/s]🔮 Predict:  80%|████████  | 41/51 [00:03<00:00, 13.84it/s]🔮 Predict:  88%|████████▊ | 45/51 [00:03<00:00, 13.73it/s]🔮 Predict:  96%|█████████▌| 49/51 [00:03<00:00, 15.46it/s]                                                           📝 Saved prediction CSV to: runs/test/test_log.csv
-📄 Saved summary to: runs/test/test_summary.txt
-✅ Test accuracy: 88.11% (2837/3220)
