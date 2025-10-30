@@ -1,113 +1,96 @@
-# Alzheimer’s AD vs NC – Recognition Report
+# Alzheimer’s Disease Classification from MRI Slices (AD vs NC)
 
-This is my write-up for the `recognition/` project. I’m treating this like a lab notebook: what I tried, what broke, what fixed it, and what numbers I actually got. The goal is simple binary classification (AD vs NC) from 2D MRI slices, but the main lesson was about proper subject-level splitting and regularisation.
+## 1) Problem
+We are classifying Alzheimer’s Disease (AD) vs Normal Control (NC) from 2D MRI brain slices derived from the ADNI dataset. The goal is to learn discriminative patterns that generalise across subjects rather than memorising subject identity. The core challenge is data leakage: multiple slices per subject exist, so improper splitting can inflate validation accuracy without reflecting real generalisation.
 
-## How it works (high-level)
+### Example input
 
-- Data is split by SUBJECT, not by individual slices. One subject can have many slices, so if you mix slices from the same subject across train/val/test, you leak identity and the model “cheats”.
-- I build three `DataLoader`s from a subject-level split: `train`, `val`, `test`. Augment only on `train`.
-- Model is a small ConvNeXt-like CNN I wrote from scratch (tiny, readable).
-- Optimizer is AdamW with weight decay; scheduler is ReduceLROnPlateau on validation loss; dropout in the classifier head.
-- I log per-epoch CSV and PNG under `recognition/runs/metrics/`, keep rolling `last.pt` and `best.pt` checkpoints, and evaluate on the held-out test set only at the end.
+![Example input MRI slice](example_input.jpeg)
 
-## Dataset layout and split by subject
+## 2) Algorithm
+I implemented a custom, tiny ConvNeXt-like CNN in PyTorch. Each stage uses depthwise 7×7 convolutions for spatial mixing, LayerNorm, a pointwise 1×1 MLP (expand → GELU → project), and a residual connection. A 4×4 stride‑4 stem performs early downsampling, followed by two stride‑2 downsamplers between stages. Finally, global average pooling and a linear head produce two logits (NC/AD). The network is intentionally small for clarity and quick training.
 
-AD_NC/
-├── train/
-│   ├── AD/
-│   └── NC/
-├── val/
-│   ├── AD/
-│   └── NC/
-└── test/
-    ├── AD/
-    └── NC/
+- Optimizer: AdamW with weight decay
+- Scheduler: ReduceLROnPlateau on validation loss
+- Regularisation: classifier head dropout
+- Augmentation: moderate spatial and photometric transforms on training only
 
-Inside each class folder are RGB JPEG slices. Subjects are inferred from the filename prefix before the first underscore, so all slices like `S001_*.jpg` belong to subject `S001`. The split is stratified by label and done at the subject level to avoid leakage.
+## 3) How it works (high level)
+1. Load JPEG slices, group by subject ID (prefix before first underscore).
+2. Perform a subject‑level stratified split into train/val/test so no subject appears in more than one split.
+3. Apply augmentations to training images; validation/test use deterministic transforms.
+4. Train the ConvNeXt‑like model with AdamW. A ReduceLROnPlateau scheduler lowers the LR when val loss stops improving. We checkpoint `last.pt` and `best.pt` and log CSV/PNG metrics.
+5. At evaluation, we run the latest checkpoint on the test set and report accuracy.
 
-## Transforms (train vs eval)
+## 4) Results
+- Validation accuracy stabilised around ~86–87% by late epochs.
+- Final held‑out test accuracy: 88.11% (3,220 images; 2,837 correct).
 
-Train uses moderate augmentation to fight overfitting. Val/Test use a deterministic resize + normalize.
+### Training curves
 
-```python
-import torchvision.transforms as T
+![Loss and Validation Accuracy](train_curve.png)
 
-train_transform = T.Compose([
-    T.RandomResizedCrop(size=224, scale=(0.85, 1.0), ratio=(0.9, 1.1)),
-    T.RandomHorizontalFlip(p=0.5),
-    T.RandomRotation(degrees=15, fill=0),
-    T.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.1),
-    T.ToTensor(),
-    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
-
-eval_transform = T.Compose([
-    T.Resize((224, 224)),
-    T.ToTensor(),
-    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+### Test results
+```
+Tested 3220 images.
+Correct predictions: 2837
+Accuracy: 88.11%
 ```
 
-## Model (tiny ConvNeXt-like)
+## 5) Pre‑processing and split justification
+- Image loading: slices are opened with PIL and converted to RGB (`.convert("RGB")`). Grayscale inputs become three identical channels, which keeps transforms and the model’s `in_channels=3` consistent.
+- Normalisation: ImageNet mean/std to stabilise optimisation of RGB CNN backbones.
+- Training transforms (aug only on train): random resized crop (224×224), horizontal flip (p=0.5), small rotation (±15°), and light color jitter. These simulate plausible variability and reduce overfitting while preserving anatomy.
+- Validation/Test transforms: resize to 224×224 + normalise.
+- Split justification: the split is by subject (not per slice) to avoid leakage where slices from the same subject appear in both train and val/test. Subject‑level splitting better reflects generalisation to new patients. This is essential for medical imaging datasets with multiple slices per subject.
 
-- Depthwise 7×7 conv → LayerNorm → pointwise MLP (expand 4C → GELU → project) → residual.
-- 3 stages with downsampling; global average pooling; classifier head with dropout.
-- No pretrained weights; kept intentionally small so it runs quickly and is readable for learning.
+References (for transform/common practice):
+- Dosovitskiy et al., augmentations for vision models; general CNN augmentation heuristics.
+- LayerNorm and depthwise conv ideas inspired by ConvNeXt (Liu et al., 2022).
 
-## Training recipe that worked
+## 6) Dependencies and reproducibility
+- Python ≥ 3.10
+- PyTorch ≥ 2.2
+- torchvision ≥ 0.17
+- numpy ≥ 1.24
+- pillow ≥ 10.0
+- matplotlib ≥ 3.7
+- tqdm ≥ 4.64
 
-- AdamW: `lr=1e-4`, `weight_decay=1e-4`
-- Batch size: 32
-- Dropout (classifier head): 0.3
-- Scheduler: ReduceLROnPlateau on val loss (`factor=0.5`, `patience=2`, `min_lr=1e-6`)
-- Epochs: 50
-- Subject-level split: `train_ratio=0.7`, `val_ratio=0.15`, remainder is test
+Reproducibility:
+- Fixed random seed (default `--seed 42`).
+- Deterministic split by subject using the same seed.
+- Logged metrics (`runs/metrics/train_log.csv`, `metrics.json`) and curves (`train_curve.png`).
+- Checkpoints: `runs/checkpoints/last.pt` and `best.pt` to resume exactly.
 
-All of this is wired in `recognition/src/train.py`. I ran it with `recognition/run.sh` (Slurm), which just shells into `python -m src.train ...` with the above settings.
+## 7) Example inputs, outputs, and plots
+- Input (single slice): 224×224 RGB tensor (from a grayscale JPEG converted to RGB).
+- Model output: logits `[logit_NC, logit_AD]`; predicted class is `argmax` (0=NC, 1=AD). For probabilities, apply softmax.
 
-## Three major attempts (what I learned)
+Example inference snippet:
+```python
+from PIL import Image
+import torch
+from torchvision import transforms
+from src.modules import build_convnext_tiny
 
-### 1) “Cheat” split (bad data loader) – validation/test mixed with subject
-Problem: I did not group by subject. Slices from the same subject landed in both train and validation. The model memorised identity-like cues and “validated” almost perfectly.
+img = Image.open("example_input.jpeg").convert("RGB")
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+])
 
-- Validation accuracy shot to the high 90s very fast, e.g. ≈98% by epoch 14–20.
-- See: `1.cheat-subject/runs/metrics/train_log.csv` and `metrics.json`.
-- Why this is wrong: we’re not learning general AD patterns; we’re recognising the same subjects we already saw during training.
+x = transform(img).unsqueeze(0)  # [1,3,224,224]
+model = build_convnext_tiny(num_classes=2, classifier_dropout=0.3).eval()
+with torch.no_grad():
+    logits = model(x)
+    pred = int(logits.argmax(dim=1))  # 0=NC, 1=AD
+```
 
-Fix: enforce subject-level splitting (the current `dataset.py` does this). Keep test untouched until the end.
-
-### 2) Serious overfitting – plateauing early ≈72–74%
-After fixing the split, accuracy dropped to something believable. But the model overfit:
-
-- Val loss increased after early epochs while train loss kept falling.
-- Validation accuracy hovered and plateaued around ≈72–74% (see epochs 6–20).
-- See: `2.(72%)Overfitting/runs/metrics/train_log.csv` and `metrics.json`.
-
-Conclusion: capacity and learning rate were pushing the model to fit training noise; augmentation and regularisation were not strong enough.
-
-### 3) ~87% validation accuracy (final) + 88.11% test
-I implemented the following changes together and trained for longer (50 epochs). This stabilised validation and improved generalisation.
-
-Changes:
-1. Lowered learning rate: `1e-3 → 1e-4`
-2. Added ReduceLROnPlateau scheduler on val loss (patience=2, factor=0.5)
-3. Added dropout (0.3) in the classifier head
-4. Enabled weight decay (`1e-4`) with AdamW
-5. Stronger data augmentation (see transforms above)
-6. Increased batch size: `16 → 32`
-7. Trained longer: `20 → 50` epochs
-
-Results:
-- Validation accuracy plateaued around ≈86–87% by late epochs. See `recognition/runs/metrics/train_log.csv` and `metrics.json` (e.g. epochs 38–50 hover ≈86%).
-- Final held-out test accuracy: 88.11% (`recognition/runs/test/test_summary.txt`).
-
-This is the first configuration that generalised well without leaking subjects and without the heavy overfitting pattern from Attempt 2.
-
-## Reproducing my run
-
-- Training (local idea; Slurm script does the same):
+## 8) Training/Testing commands (examples)
+Train (50 epochs, subject split 70/15/15):
   ```bash
-  cd recognition
   python -u -m src.train \
     --data-root /path/to/AD_NC \
     --epochs 50 \
@@ -118,9 +101,9 @@ This is the first configuration that generalised well without leaking subjects a
     --checkpoints-dir runs/checkpoints \
     --plots-dir runs/metrics
   ```
-- Evaluation on test (loads latest checkpoint):
+
+Evaluate on test:
   ```bash
-  cd recognition
   python -u -m src.predict \
     --data-root /path/to/AD_NC \
     --batch-size 64 \
@@ -128,26 +111,5 @@ This is the first configuration that generalised well without leaking subjects a
     --predictions-dir runs/test
   ```
 
-## Results
-
-### Training curves
-
-![Loss and Validation Accuracy](loss_acc_epoch.png)
-
-### Test Results
-
-Tested 3220 images.
-Correct predictions: 2837
-Accuracy: 88.11%
-
-
-## What I’d try next
-
-- Slightly stronger augmentation (e.g., mild elastic/affine) while watching for label-preservation.
-- Early stopping around the stable high-80s region.
-- Simple subject-level ensembling (average logits across a subject’s slices) if subject-major metrics are needed.
-- Calibrate probabilities (temperature scaling) if this were used downstream clinically.
-
-## Notes
-- This report follows the spirit of the assignment spec: subject-level integrity, clean separation of validation and testing, and a clear description of iterations.
-- My older notes are in `old.README.md` (kept for style/history). This README is the cleaned-up version with actual measured numbers from `runs/`.
+---
+If needed, subject‑level ensembling (averaging slice probabilities per subject) can be added to produce per‑subject decisions rather than per‑slice predictions.
