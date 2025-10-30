@@ -128,16 +128,18 @@ This is the first configuration that generalised well without leaking subjects a
     --predictions-dir runs/test
   ```
 
-Outputs to look at:
-- `recognition/runs/metrics/train_log.csv` (epoch, train_loss, val_loss, val_acc)
-- `recognition/runs/metrics/metrics.json` (arrays + example preds)
-- `recognition/runs/metrics/loss_acc_epoch.png` (curves)
-- `recognition/runs/checkpoints/best.pt` and `last.pt`
-- `recognition/runs/test/test_summary.txt` (final test accuracy)
+## Results
 
-## Curves
+### Training curves
 
 ![Loss and Validation Accuracy](loss_acc_epoch.png)
+
+### Test Results
+
+Tested 3220 images.
+Correct predictions: 2837
+Accuracy: 88.11%
+
 
 ## What I’d try next
 
