@@ -12,7 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_OUT_DIR="$SCRIPT_DIR/runs"
 REMOTE_HOST="rangpur"
-REMOTE_DIRS=("~/recognition/runs" "~/runs")
+REMOTE_DIRS=("~/recognition/runs" "~/runs" )
 
 # Make sure the local runs directory exists
 mkdir -p "$LOCAL_OUT_DIR"

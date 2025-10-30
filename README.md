@@ -1,114 +1,151 @@
-# Data 
+# Alzheimer’s AD vs NC – Recognition Report
 
+This is my write-up for the `recognition/` project. I’m treating this like a lab notebook: what I tried, what broke, what fixed it, and what numbers I actually got. The goal is simple binary classification (AD vs NC) from 2D MRI slices, but the main lesson was about proper subject-level splitting and regularisation.
 
-We need the model to effectively seperate the train dataset by subject. 
-Since one subject can have multiple slices. 
-If we train on the same subject, and then validate on the same subject. 
-Then we are basically just validating on the same stuff that we trained on. 
+## How it works (high-level)
 
-So obviously Accuracy going to be high straight away. 
+- Data is split by SUBJECT, not by individual slices. One subject can have many slices, so if you mix slices from the same subject across train/val/test, you leak identity and the model “cheats”.
+- I build three `DataLoader`s from a subject-level split: `train`, `val`, `test`. Augment only on `train`.
+- Model is a small ConvNeXt-like CNN I wrote from scratch (tiny, readable).
+- Optimizer is AdamW with weight decay; scheduler is ReduceLROnPlateau on validation loss; dropout in the classifier head.
+- I log per-epoch CSV and PNG under `recognition/runs/metrics/`, keep rolling `last.pt` and `best.pt` checkpoints, and evaluate on the held-out test set only at the end.
 
-But that means we arent LEARNING right.
-
-So we split the train/ directory into, TRAIN and VALIDATE. 
-
-We are splitting by subject. (since each subjects slices are likely similar?) 
-
-And obviously we keep testing completely seperate till the end!!
+## Dataset layout and split by subject
 
 AD_NC/
-├── train/          # used for fitting model weights
+├── train/
 │   ├── AD/
 │   └── NC/
-├── val/            # unseen subjects, used to tune hyperparams and check generalization
+├── val/
 │   ├── AD/
 │   └── NC/
-└── test/           # completely untouched until the final report
+└── test/
     ├── AD/
     └── NC/
 
+Inside each class folder are RGB JPEG slices. Subjects are inferred from the filename prefix before the first underscore, so all slices like `S001_*.jpg` belong to subject `S001`. The split is stratified by label and done at the subject level to avoid leakage.
 
-## DATA AUG
-Since data is small. 
+## Transforms (train vs eval)
 
-transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(15),
-    transforms.ColorJitter(brightness=0.1, contrast=0.1),
-    transforms.ToTensor(),
-    transforms.Normalize(mean, std)
+Train uses moderate augmentation to fight overfitting. Val/Test use a deterministic resize + normalize.
+
+```python
+import torchvision.transforms as T
+
+train_transform = T.Compose([
+    T.RandomResizedCrop(size=224, scale=(0.85, 1.0), ratio=(0.9, 1.1)),
+    T.RandomHorizontalFlip(p=0.5),
+    T.RandomRotation(degrees=15, fill=0),
+    T.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.1),
+    T.ToTensor(),
+    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
+eval_transform = T.Compose([
+    T.Resize((224, 224)),
+    T.ToTensor(),
+    T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+```
 
+## Model (tiny ConvNeXt-like)
 
+- Depthwise 7×7 conv → LayerNorm → pointwise MLP (expand 4C → GELU → project) → residual.
+- 3 stages with downsampling; global average pooling; classifier head with dropout.
+- No pretrained weights; kept intentionally small so it runs quickly and is readable for learning.
 
-# Model ConvNext
+## Training recipe that worked
 
-## Regularization
+- AdamW: `lr=1e-4`, `weight_decay=1e-4`
+- Batch size: 32
+- Dropout (classifier head): 0.3
+- Scheduler: ReduceLROnPlateau on val loss (`factor=0.5`, `patience=2`, `min_lr=1e-6`)
+- Epochs: 50
+- Subject-level split: `train_ratio=0.7`, `val_ratio=0.15`, remainder is test
 
-### Dropout
+All of this is wired in `recognition/src/train.py`. I ran it with `recognition/run.sh` (Slurm), which just shells into `python -m src.train ...` with the above settings.
 
-### Weight Decay
+## Three major attempts (what I learned)
 
+### 1) “Cheat” split (bad data loader) – validation/test mixed with subject
+Problem: I did not group by subject. Slices from the same subject landed in both train and validation. The model memorised identity-like cues and “validated” almost perfectly.
 
+- Validation accuracy shot to the high 90s very fast, e.g. ≈98% by epoch 14–20.
+- See: `1.cheat-subject/runs/metrics/train_log.csv` and `metrics.json`.
+- Why this is wrong: we’re not learning general AD patterns; we’re recognising the same subjects we already saw during training.
 
-# Train
+Fix: enforce subject-level splitting (the current `dataset.py` does this). Keep test untouched until the end.
 
+### 2) Serious overfitting – plateauing early ≈72–74%
+After fixing the split, accuracy dropped to something believable. But the model overfit:
 
+- Val loss increased after early epochs while train loss kept falling.
+- Validation accuracy hovered and plateaued around ≈72–74% (see epochs 6–20).
+- See: `2.(72%)Overfitting/runs/metrics/train_log.csv` and `metrics.json`.
 
-# Attempts
+Conclusion: capacity and learning rate were pushing the model to fit training noise; augmentation and regularisation were not strong enough.
 
-## 1.Validation + Training Mixed
-So we didnt group by subjects, so the model achieved crazy accuracy.
-But this was cheating. Model wasnt learning.
+### 3) ~87% validation accuracy (final) + 88.11% test
+I implemented the following changes together and trained for longer (50 epochs). This stabilised validation and improved generalisation.
 
-  -- 20 epochs
-  --batch-size 16 
-  --lr 1e-3 
+Changes:
+1. Lowered learning rate: `1e-3 → 1e-4`
+2. Added ReduceLROnPlateau scheduler on val loss (patience=2, factor=0.5)
+3. Added dropout (0.3) in the classifier head
+4. Enabled weight decay (`1e-4`) with AdamW
+5. Stronger data augmentation (see transforms above)
+6. Increased batch size: `16 → 32`
+7. Trained longer: `20 → 50` epochs
 
-## 2. (72%) Model was clearly overfitting
-Model was overfitting.
-We see plateau at 72% accuracy.
-Train loss dec, val loss inc.
+Results:
+- Validation accuracy plateaued around ≈86–87% by late epochs. See `recognition/runs/metrics/train_log.csv` and `metrics.json` (e.g. epochs 38–50 hover ≈86%).
+- Final held-out test accuracy: 88.11% (`recognition/runs/test/test_summary.txt`).
 
-Plateud after like 12
+This is the first configuration that generalised well without leaking subjects and without the heavy overfitting pattern from Attempt 2.
 
-  -- 20 epochs
-  --batch-size 16 
-  --lr 1e-3 
+## Reproducing my run
 
-### 3. (86%) 
+- Training (local idea; Slurm script does the same):
+  ```bash
+  cd recognition
+  python -u -m src.train \
+    --data-root /path/to/AD_NC \
+    --epochs 50 \
+    --batch-size 32 \
+    --lr 1e-4 \
+    --weight-decay 1e-4 \
+    --classifier-dropout 0.3 \
+    --checkpoints-dir runs/checkpoints \
+    --plots-dir runs/metrics
+  ```
+- Evaluation on test (loads latest checkpoint):
+  ```bash
+  cd recognition
+  python -u -m src.predict \
+    --data-root /path/to/AD_NC \
+    --batch-size 64 \
+    --checkpoints-dir runs/checkpoints \
+    --predictions-dir runs/test
+  ```
 
-1. Half learning rate
-    1e-3 to 1e-4
-Scheduler
-halves learning rate when val loss plateus
+Outputs to look at:
+- `recognition/runs/metrics/train_log.csv` (epoch, train_loss, val_loss, val_acc)
+- `recognition/runs/metrics/metrics.json` (arrays + example preds)
+- `recognition/runs/metrics/loss_acc_epoch.png` (curves)
+- `recognition/runs/checkpoints/best.pt` and `last.pt`
+- `recognition/runs/test/test_summary.txt` (final test accuracy)
 
-faster early learning,
-later, we get finer tuning
+## Curves
 
-2. Dropout in classifier head
-* forces model to learn patterns
-* reduces model from overfitting
-    - reduce validation loss from increasing
-* reduces model from memorisatio
+![Loss and Validation Accuracy](recognition/runs/metrics/loss_acc_epoch.png)
 
-3. enable weight decay
-reduces memorizing tiny image details
+## What I’d try next
 
+- Slightly stronger augmentation (e.g., mild elastic/affine) while watching for label-preservation.
+- Early stopping around the stable high-80s region.
+- Simple subject-level ensembling (average logits across a subject’s slices) if subject-major metrics are needed.
+- Calibrate probabilities (temperature scaling) if this were used downstream clinically.
 
-4. Data Augmentation
-* data very clean
-* gives it some fake chaos.
-    - makes it learns patterns better
-    - less learning on exact pixels
-* alzheimers is alzeheimers, even if upside down
-
-
-
-5. Increase batch size
-* reduce gradient noise.
-16- 32
-
-6. Epoch from 20 to 50
+## Notes
+- This report follows the spirit of the assignment spec: subject-level integrity, clean separation of validation and testing, and a clear description of iterations.
+- My older notes are in `old.README.md` (kept for style/history). This README is the cleaned-up version with actual measured numbers from `runs/`.
